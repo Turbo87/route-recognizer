@@ -10,6 +10,7 @@ pub mod nfa;
 
 #[derive(Clone)]
 struct Metadata {
+    route: String,
     statics: u32,
     dynamics: u32,
     stars: u32,
@@ -17,8 +18,9 @@ struct Metadata {
 }
 
 impl Metadata {
-    pub fn new() -> Self {
+    pub fn new(route: String) -> Self {
         Self {
+            route,
             statics: 0,
             dynamics: 0,
             stars: 0,
@@ -124,12 +126,13 @@ impl<'a> Iterator for Iter<'a> {
 
 pub struct Match<T> {
     pub handler: T,
+    pub route: String,
     pub params: Params,
 }
 
 impl<T> Match<T> {
-    pub fn new(handler: T, params: Params) -> Self {
-        Self { handler, params }
+    pub fn new(handler: T, route: String, params: Params) -> Self {
+        Self { handler, route, params }
     }
 }
 
@@ -148,13 +151,14 @@ impl<T> Router<T> {
     }
 
     pub fn add(&mut self, mut route: &str, dest: T) {
+        let mut metadata = Metadata::new(route.to_string());
+
         if !route.is_empty() && route.as_bytes()[0] == b'/' {
             route = &route[1..];
         }
 
         let nfa = &mut self.nfa;
         let mut state = 0;
-        let mut metadata = Metadata::new();
 
         for (i, segment) in route.split('/').enumerate() {
             if i > 0 {
@@ -193,6 +197,7 @@ impl<T> Router<T> {
                 let mut map = Params::new();
                 let state = &nfa.get(nfa_match.state);
                 let metadata = state.metadata.as_ref().unwrap();
+                let route = metadata.route.clone();
                 let param_names = metadata.param_names.clone();
 
                 for (i, capture) in nfa_match.captures.iter().enumerate() {
@@ -202,7 +207,7 @@ impl<T> Router<T> {
                 }
 
                 let handler = self.handlers.get(&nfa_match.state).unwrap();
-                Ok(Match::new(handler, map))
+                Ok(Match::new(handler, route, map))
             }
             Err(str) => Err(str),
         }
@@ -256,6 +261,7 @@ mod tests {
         let m = router.recognize("/thomas").unwrap();
 
         assert_eq!(*m.handler, "Thomas".to_string());
+        assert_eq!(m.route, "/thomas");
         assert_eq!(m.params, Params::new());
     }
 
@@ -290,10 +296,12 @@ mod tests {
         let id = router.recognize("/posts/1").unwrap();
 
         assert_eq!(*id.handler, "id".to_string());
+        assert_eq!(id.route, "/posts/:id");
         assert_eq!(id.params, params("id", "1"));
 
         let new = router.recognize("/posts/new").unwrap();
         assert_eq!(*new.handler, "new".to_string());
+        assert_eq!(new.route, "/posts/new");
         assert_eq!(new.params, Params::new());
     }
 
@@ -307,10 +315,12 @@ mod tests {
         let id = router.recognize("/posts/1").unwrap();
 
         assert_eq!(*id.handler, "id".to_string());
+        assert_eq!(id.route, "/posts/:id");
         assert_eq!(id.params, params("id", "1"));
 
         let new = router.recognize("/posts/new").unwrap();
         assert_eq!(*new.handler, "new".to_string());
+        assert_eq!(new.route, "/posts/new");
         assert_eq!(new.params, Params::new());
     }
 
@@ -325,9 +335,11 @@ mod tests {
         let coms = router.recognize("/posts/12/comments").unwrap();
 
         assert_eq!(*com.handler, "comment".to_string());
+        assert_eq!(com.route, "/posts/:post_id/comments/:id");
         assert_eq!(com.params, two_params("post_id", "12", "id", "100"));
 
         assert_eq!(*coms.handler, "comments".to_string());
+        assert_eq!(coms.route, "/posts/:post_id/comments");
         assert_eq!(coms.params, params("post_id", "12"));
         assert_eq!(coms.params["post_id"], "12".to_string());
     }
@@ -341,14 +353,17 @@ mod tests {
 
         let m = router.recognize("/test").unwrap();
         assert_eq!(*m.handler, "test".to_string());
+        assert_eq!(m.route, "*foo");
         assert_eq!(m.params, params("foo", "test"));
 
         let m = router.recognize("/foo/bar").unwrap();
         assert_eq!(*m.handler, "test".to_string());
+        assert_eq!(m.route, "*foo");
         assert_eq!(m.params, params("foo", "foo/bar"));
 
         let m = router.recognize("/bar/foo").unwrap();
         assert_eq!(*m.handler, "test2".to_string());
+        assert_eq!(m.route, "/bar/*foo");
         assert_eq!(m.params, params("foo", "foo"));
     }
 
@@ -362,30 +377,37 @@ mod tests {
 
         let m = router.recognize("/a/foo").unwrap();
         assert_eq!(*m.handler, "ab".to_string());
+        assert_eq!(m.route, "/a/*b");
         assert_eq!(m.params, params("b", "foo"));
 
         let m = router.recognize("/a/foo/bar").unwrap();
         assert_eq!(*m.handler, "ab".to_string());
+        assert_eq!(m.route, "/a/*b");
         assert_eq!(m.params, params("b", "foo/bar"));
 
         let m = router.recognize("/a/foo/c").unwrap();
         assert_eq!(*m.handler, "abc".to_string());
+        assert_eq!(m.route, "/a/*b/c");
         assert_eq!(m.params, params("b", "foo"));
 
         let m = router.recognize("/a/foo/bar/c").unwrap();
         assert_eq!(*m.handler, "abc".to_string());
+        assert_eq!(m.route, "/a/*b/c");
         assert_eq!(m.params, params("b", "foo/bar"));
 
         let m = router.recognize("/a/foo/c/baz").unwrap();
         assert_eq!(*m.handler, "abcd".to_string());
+        assert_eq!(m.route, "/a/*b/c/:d");
         assert_eq!(m.params, two_params("b", "foo", "d", "baz"));
 
         let m = router.recognize("/a/foo/bar/c/baz").unwrap();
         assert_eq!(*m.handler, "abcd".to_string());
+        assert_eq!(m.route, "/a/*b/c/:d");
         assert_eq!(m.params, two_params("b", "foo/bar", "d", "baz"));
 
         let m = router.recognize("/a/foo/bar/c/baz/bay").unwrap();
         assert_eq!(*m.handler, "ab".to_string());
+        assert_eq!(m.route, "/a/*b");
         assert_eq!(m.params, params("b", "foo/bar/c/baz/bay"));
     }
 
@@ -397,10 +419,12 @@ mod tests {
         router.add("/foo/:bar/*", "test2".to_string());
         let m = router.recognize("/foo/test/bar").unwrap();
         assert_eq!(*m.handler, "test");
+        assert_eq!(m.route, "/foo/:/bar");
         assert_eq!(m.params, Params::new());
 
         let m = router.recognize("/foo/test/blah").unwrap();
         assert_eq!(*m.handler, "test2");
+        assert_eq!(m.route, "/foo/:bar/*");
         assert_eq!(m.params, params("bar", "test"));
     }
 
